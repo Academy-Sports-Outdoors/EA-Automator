@@ -1,0 +1,106 @@
+name: Import Expert Advice Article
+
+on:
+  workflow_dispatch:
+    inputs:
+      doc_id:
+        description: Google Doc ID
+        required: true
+        type: string
+      preference:
+        description: What to do with the built article
+        required: true
+        default: Preview Only
+        type: choice
+        options:
+          - Preview Only
+          - Save Draft
+          - Publish
+      contentstack_environment:
+        description: Contentstack environments, comma-separated. Used only for Publish.
+        required: false
+        default: development,production,prod2
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  import:
+    runs-on: ubuntu-latest
+    # The actor's GitHub Environment owns their Contentstack session token.
+    # This is separate from the Contentstack publish environment input above.
+    environment: ${{ github.actor }}
+    concurrency:
+      group: ea-article-import
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+      - run: npm ci
+      - run: npm test
+      - name: Check GitHub secrets
+        env:
+          CS_API_KEY: ${{ secrets.CS_API_KEY }}
+          CS_AUTHTOKEN: ${{ secrets.CS_AUTHTOKEN }}
+          GOOGLE_SERVICE_ACCOUNT_JSON: ${{ secrets.GOOGLE_SERVICE_ACCOUNT_JSON || secrets.GOOGLE_CREDENTIALS }}
+        run: |
+          set -euo pipefail
+          if [[ -z "$CS_API_KEY" ]]; then
+            echo "::error::Missing CS_API_KEY repository secret."
+            exit 1
+          fi
+          if [[ -z "$CS_AUTHTOKEN" ]]; then
+            echo "::error::Missing CS_AUTHTOKEN in the GitHub Environment named for this workflow actor."
+            exit 1
+          fi
+          if [[ -z "$GOOGLE_SERVICE_ACCOUNT_JSON" ]]; then
+            echo "::error::Missing GOOGLE_CREDENTIALS or GOOGLE_SERVICE_ACCOUNT_JSON repository secret."
+            exit 1
+          fi
+      - name: Import Google Doc
+        env:
+          CS_API_KEY: ${{ secrets.CS_API_KEY }}
+          CS_AUTHTOKEN: ${{ secrets.CS_AUTHTOKEN }}
+          CS_STACK_UID: ${{ vars.CS_STACK_UID }}
+          CS_CMA_BASE_URL: ${{ vars.CS_CMA_BASE_URL }}
+          GOOGLE_SERVICE_ACCOUNT_JSON: ${{ secrets.GOOGLE_SERVICE_ACCOUNT_JSON || secrets.GOOGLE_CREDENTIALS }}
+          DOC_ID: ${{ inputs.doc_id }}
+          PREFERENCE: ${{ inputs.preference }}
+          CONTENTSTACK_ENVIRONMENT: ${{ inputs.contentstack_environment }}
+        run: |
+          set -euo pipefail
+          args=(--doc "$DOC_ID")
+          case "$PREFERENCE" in
+            "Preview Only") args+=(--dry-run) ;;
+            "Save Draft") args+=(--apply) ;;
+            "Publish")
+              if [[ -z "${CONTENTSTACK_ENVIRONMENT//[[:space:],]/}" ]]; then
+                echo "::error::Publish requires contentstack_environment."
+                exit 1
+              fi
+              args+=(--apply --publish --environment "$CONTENTSTACK_ENVIRONMENT")
+              ;;
+            *)
+              echo "::error::Unknown preference: $PREFERENCE"
+              exit 1
+              ;;
+          esac
+          node scripts/import.js "${args[@]}"
+      - name: Upload preview
+        id: upload-preview
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: expert-advice-preview
+          path: out/
+          if-no-files-found: ignore
+      - name: Link preview artifact in summary
+        if: always() && steps.upload-preview.outputs.artifact-url != ''
+        env:
+          ARTIFACT_URL: ${{ steps.upload-preview.outputs.artifact-url }}
+        run: |
+          echo "- Preview artifact: [expert-advice-preview]($ARTIFACT_URL)" >> "$GITHUB_STEP_SUMMARY"

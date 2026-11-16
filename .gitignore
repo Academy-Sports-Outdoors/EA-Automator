@@ -1,0 +1,7 @@
+node_modules/
+out/
+.env
+*.pem
+*service-account*.json
+gen-lang-client-*.json
+.DS_Store

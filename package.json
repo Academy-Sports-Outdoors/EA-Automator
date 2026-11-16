@@ -1,0 +1,14 @@
+{
+  "name": "ea-automator",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Build an Expert Advice article from a Google Doc and publish it to Contentstack.",
+  "scripts": {
+    "test": "node --test",
+    "import": "node scripts/import.js"
+  },
+  "engines": {
+    "node": ">=22"
+  }
+}
